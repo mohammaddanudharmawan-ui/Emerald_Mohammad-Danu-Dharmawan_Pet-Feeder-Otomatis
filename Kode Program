@@ -1,0 +1,87 @@
+#include <ESP32Servo.h>
+
+const int PIN_TRIG  = 2;   // HC-SR04 Trig  -> D2
+const int PIN_ECHO  = 4;   // HC-SR04 Echo  -> D4
+const int PIN_SERVO = 5;   // Servo sinyal  -> D5
+
+const float AMBANG_CM = 8.0;              // jarak >= nilai ini = pakan hampir habis
+const int SUDUT_TUTUP = 0;
+const int SUDUT_BUKA = 90;
+const unsigned long DURASI_BUKA_MS = 2000;
+const unsigned long JEDA_ISI_MS = 10000;  // jeda minimum antarpengisian
+const int JUMLAH_SAMPEL = 5;
+
+Servo katup;
+unsigned long waktuIsiTerakhir = 0;
+bool pernahIsi = false;
+
+float bacaJarakCm() {
+  digitalWrite(PIN_TRIG, LOW);
+  delayMicroseconds(2);
+  digitalWrite(PIN_TRIG, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(PIN_TRIG, LOW);
+
+  long durasi = pulseIn(PIN_ECHO, HIGH, 30000UL);  // batas waktu 30 ms
+  if (durasi == 0) return -1;                       // tidak ada pantulan
+  return durasi * 0.0343 / 2.0;                     // cm
+}
+
+float bacaJarakTengah() {
+  float data[JUMLAH_SAMPEL];
+  int n = 0;
+  for (int i = 0; i < JUMLAH_SAMPEL; i++) {
+    float d = bacaJarakCm();
+    if (d > 0) data[n++] = d;
+    delay(30);
+  }
+  if (n == 0) return -1;
+
+  for (int i = 0; i < n - 1; i++) {          // urutkan naik
+    for (int j = i + 1; j < n; j++) {
+      if (data[j] < data[i]) {
+        float t = data[i];
+        data[i] = data[j];
+        data[j] = t;
+      }
+    }
+  }
+  return data[n / 2];                        // nilai tengah
+}
+
+void isiPakan() {
+  Serial.println("Pakan hampir habis -> katup dibuka");
+  katup.write(SUDUT_BUKA);
+  delay(DURASI_BUKA_MS);
+  katup.write(SUDUT_TUTUP);
+  Serial.println("Katup ditutup");
+}
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(PIN_TRIG, OUTPUT);
+  pinMode(PIN_ECHO, INPUT);
+  katup.setPeriodHertz(50);
+  katup.attach(PIN_SERVO, 500, 2400);
+  katup.write(SUDUT_TUTUP);
+}
+
+void loop() {
+  float jarak = bacaJarakTengah();
+
+  if (jarak < 0) {
+    Serial.println("Sensor tidak terbaca");
+  } else {
+    Serial.print("Jarak ke pakan: ");
+    Serial.print(jarak);
+    Serial.println(" cm");
+
+    bool jedaCukup = !pernahIsi || (millis() - waktuIsiTerakhir >= JEDA_ISI_MS);
+    if (jarak >= AMBANG_CM && jedaCukup) {
+      isiPakan();
+      waktuIsiTerakhir = millis();
+      pernahIsi = true;
+    }
+  }
+  delay(500);
+}
